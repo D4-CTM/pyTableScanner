@@ -1,12 +1,11 @@
 from table_entities import fetch_schema_tables
+from dotenv import load_dotenv
+from os import getenv
 
-connection_string = """
-    dbname=postgres
-    host=localhost
-    port=4884
-    user=postgres
-    password=Postgres
-"""
+load_dotenv()
 
-for table in fetch_schema_tables("public", connection_string):
+connection_string = getenv("CONNECTION_STRING")
+schema = getenv("SCHEMA_TO_SCAN")
+
+for table in fetch_schema_tables(schema, connection_string):
     print(table)
