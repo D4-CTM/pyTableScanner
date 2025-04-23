@@ -5,11 +5,18 @@ For this app to work it'll requiere the next dependencies to be installed:
 pip install psycopg2-binary python-dotenv pypdf langchain langchain-openai sentence-transformers
 ```
 
-It is a simple schema scanner for **postgres** databases. It is require that the root
-of the app contains a `.env` file with the next fields:
+As for the vector database, it is postgres with the **pgvector** extension. In this 
+repository you'll find a docker compose that uses pgvector's image, simply execute
+on the terminal:
 ```bash
-VECTOR_CONNECTION_STRING="..."
-CONNECTION_STRING="..."
+docker compose -f docker-compose.yml up -d
+```
+
+Finally, before running this program you'll need to create a `.env` file with the next
+environment variables:
+```bash
+VECTOR_CONNECTION_STRING="dbname=postgres host=localhost port=4884 user=postgres password=Postgres"
+CONNECTION_STRING="..." # As for now, this project only supports postgres databases
 SCHEMA_TO_SCAN="public"
 ```
 

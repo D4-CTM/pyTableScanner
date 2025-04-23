@@ -1,5 +1,6 @@
-from table_entities import fetch_schema_tables, execute_query, vectorize, search_on_postgres_documentation
+from pg_vectorization import vectorize, search_on_postgres_documentation
 from langchain.agents import create_react_agent, AgentExecutor
+from table_entities import fetch_schema_tables, execute_query
 from langchain.memory import ConversationBufferMemory
 from langchain_openai.chat_models import ChatOpenAI
 from langchain.prompts import PromptTemplate
