@@ -2,7 +2,7 @@
 
 For this app to work it'll requiere the next dependencies to be installed:
 ```bash
-pip install psycopg2-binary python-dotenv pypdf langchain langchain-openai sentence-transformers
+pip install psycopg2-binary python-dotenv pypdf langchain langchain-openai sentence-transformers langchain-text-splitters
 ```
 
 As for the vector database, it is postgres with the **pgvector** extension. In this 
