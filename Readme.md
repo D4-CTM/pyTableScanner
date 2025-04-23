@@ -2,7 +2,7 @@
 
 For this app to work it'll requiere the next dependencies to be installed:
 ```bash
-pip install psycopg2-binary python-dotenv
+pip install psycopg2-binary python-dotenv langchain langchain-openai
 ```
 
 It is a simple schema scanner for **postgres** databases. It is require that the root
