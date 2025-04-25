@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from langchain_core.tools import tool
+from collections import defaultdict
 from dotenv import load_dotenv
 from os import getenv
 import psycopg2
@@ -20,18 +21,22 @@ class Columns:
 @dataclass
 class ForeignKeys:
     referencing_column: str
+    referencing_table: str
     reference_column: str
     reference_table: str
 
     def __str__(self):
-        return f"foreign key({self.referencing_column}) references {self.reference_table}({self.reference_column})"
+        if not self.is_reference:
+            return f"foreign key({self.referencing_column}) references {self.reference_table}({self.reference_column})"
 
 
 @dataclass
 class Table:
     table_name: str
+    registries: int
     columns: dict[str, Columns] = field(default_factory=dict)
-    foreign_keys: dict[str, ForeignKeys] = field(default_factory=dict)
+    foreign_keys: dict[str, list[ForeignKeys]] = field(default_factory=dict)
+    references_to_table: dict[str, list[ForeignKeys]] = field(default_factory=dict)
 
     def get_primary_keys(self) -> list[Columns]:
         columns: list[Columns] = []
@@ -48,8 +53,12 @@ class Table:
 
         result += "\nForeign key(s):\n"
 
-        for _, fk in self.foreign_keys.items():
-            result += f"\t{fk}\n"
+        for _, fks in self.foreign_keys.items():
+            if (len(fks) == 0):
+                result += "\tThis table has no foreign keys\n"
+            else:
+                for fk in fks:
+                    result += f"\t{fk}\n"
 
         result += "\nPrimary key(s):\n"
 
@@ -57,12 +66,88 @@ class Table:
             if column.primary_key:
                 result += f"\tPrimary key: {column.field_name}\n"
 
+        result += f"\tThis tables has {self.registries} rows\n\n"
+
         return result
 
 
-def fetch_table_foreign_keys(schema_name: str, table_name: str, con) -> dict[str, ForeignKeys]:
+def fetch_table_row_amount(table_name: str, con) -> int:
     try:
-        fks: dict[str, ForeignKeys] = {}
+        with con.cursor() as cur:
+            registries_query = f"""
+            SELECT
+                count(*)
+            FROM
+                {table_name}
+            """
+            cur.execute(registries_query, ())
+
+            row = cur.fetchone()
+            if row:
+                return row[0]
+
+    except Exception as err:
+        if con:
+            con.rollback()
+        raise RuntimeError(f"Crash while getting the amount of rows in {table_name}:\n{err}")
+
+
+def fetch_references_to_table(schema_name: str, table_name: str, con) -> dict[str, list[ForeignKeys]]:
+    try:
+        fks: dict[str, list[ForeignKeys]] = defaultdict(list)
+        with con.cursor() as cur:
+            fks_query = """
+            SELECT
+                kcu.TABLE_NAME AS referencing_table,
+                kcu.COLUMN_NAME AS referencing_col,
+                ccu.TABLE_NAME AS reference_table,
+                ccu.COLUMN_NAME AS reference_col
+            FROM
+                pg_namespace nms
+            JOIN
+                pg_constraint cns
+            ON
+                nms.oid = cns.connamespace
+            JOIN
+                pg_class rel
+            ON
+                rel.oid = cns.conrelid
+            JOIN
+                information_schema.key_column_usage kcu
+            ON
+                cns.conname = kcu.constraint_name
+            LEFT JOIN
+                information_schema.constraint_column_usage ccu
+            ON
+                cns.conname = ccu.CONSTRAINT_NAME
+            WHERE
+                nms.nspname = %s AND
+                ccu.table_name = %s AND
+                cns.contype = 'f'
+            """
+
+            cur.execute(fks_query, (schema_name, table_name))
+
+            rows = cur.fetchall()
+            for row in rows:
+                fk = ForeignKeys(
+                    referencing_table=row[0],
+                    referencing_column=row[1],
+                    reference_table=row[2],
+                    reference_column=row[3],
+                )
+                fks[table_name].append(fk)
+
+            return fks
+    except Exception as err:
+        if con:
+            con.rollback()
+        raise RuntimeError(f"Crash while getting tables from schema:\n{err}")
+
+
+def fetch_table_foreign_keys(schema_name: str, table_name: str, con) -> dict[str, list[ForeignKeys]]:
+    try:
+        fks: dict[str, list[ForeignKeys]] = defaultdict(list)
         with con.cursor() as cur:
             fks_query = """
             SELECT
@@ -99,10 +184,11 @@ def fetch_table_foreign_keys(schema_name: str, table_name: str, con) -> dict[str
             for row in rows:
                 fk = ForeignKeys(
                     referencing_column=row[0],
+                    referencing_table=table_name,
                     reference_table=row[1],
                     reference_column=row[2],
                 )
-                fks[row[0]] = fk
+                fks[table_name].append(fk)
 
             return fks
     except Exception as err:
@@ -183,7 +269,7 @@ def fetch_table_columns(schema_name: str, table_name: str, con) -> dict[str, Col
 
 
 @tool
-def fetch_schema_tables() -> str:
+def fetch_schema_tables() -> list[Table]:
     """
     Function that gets the tables on a the 'public' schema.
 
@@ -223,16 +309,18 @@ def fetch_schema_tables() -> str:
                             schema_name,
                             row[0],
                             con
-                        )
+                        ),
+                        references_to_table=fetch_references_to_table(
+                            schema_name,
+                            row[0],
+                            con
+                        ),
+                        registries=fetch_table_row_amount(row[0], con)
                     )
 
                     tables.append(table)
 
-                result: str = ""
-                for table in tables:
-                    result += str(table)
-
-                return result
+                return tables
     except Exception as err:
         if con:
             con.rollback()
@@ -243,21 +331,19 @@ def fetch_schema_tables() -> str:
 @tool
 def execute_query(query: str) -> str:
     """
-    Tool that executes a query and returns a json based
-    on that result.
+    Executes a SQL query and returns a safe, formatted JSON summary
+    of the result. Limits the number of rows to avoid context overload.
 
-    Use only in two cases:
-    1. When the user inputs directly a query that he needs you to execute.
-    2. When the user asks for the retrival of information within the database, in this
-       cases YOU are in charge of creating the query!
+    Use only:
+    1. If the user gives you a SQL query directly.
+    2. If you generated the query to retrieve information from the database.
 
-    In both cases, you should, after the output is given (in case it didn't crash), return
-    a formatted answer based on that json rather than the json itself.
+    After executing (if successful), format the answer using the data,
+    NOT the raw JSON.
+
+    If the result is too large, return a warning to the user instead.
     """
-    if query[-1] == ";":
-        query = query[:-1]
-
-    print(query)
+    query = query.strip().rstrip(";")
     try:
         connection_string = getenv("CONNECTION_STRING")
         with psycopg2.connect(connection_string) as con:
@@ -275,5 +361,5 @@ def execute_query(query: str) -> str:
     except Exception as err:
         if con:
             con.rollback()
-        return f"Crash while executing {query}\nError: {err}\n"
+        return f"Crash while executing the queyr\nError: {err}\n"
         # raise RuntimeError(f"Crash while executing {query}\nError: {err}\n")

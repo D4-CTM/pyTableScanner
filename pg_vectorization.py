@@ -96,7 +96,7 @@ def search_on_postgres_documentation(text: str) -> str:
                     ON io.id = vi.origin_id
                     WHERE io.file_name = 'Postgres 17 documentation'
                     ORDER BY embedding <-> %s::vector
-                    LIMIT 100
+                    LIMIT 50
                 """, (embedding.tolist(),))
 
                 result = cur.fetchall()

@@ -1,4 +1,5 @@
 from pg_vectorization import vectorize, search_on_postgres_documentation
+from schema_djikstra import create_djikstra
 from langchain.agents import create_react_agent, AgentExecutor
 from table_entities import fetch_schema_tables, execute_query
 from langchain.memory import ConversationBufferMemory
@@ -7,9 +8,8 @@ from langchain.prompts import PromptTemplate
 
 path = "postgresql-17-US.pdf"
 
-# If you change the docName, change the query on
-# search_on_postgres_documentation to reflect the change on the new
-# document name
+# If you change the docName, change the query on  search_on_postgres_documentation
+# to reflect the change on the new document name
 docName = "Postgres 17 documentation"
 vectorize(path, docName)
 
@@ -19,50 +19,49 @@ chat = ChatOpenAI(
     model="adamo1139/Hermes-3-Llama-3.1-8B-FP8-Dynamic"
 )
 
+
 prompt = PromptTemplate.from_template("""
-Answer the following questions as best you can. You have
-access to the following tools:
+You are an intelligent agent equipped with tools to fetch and reason about data stored in a PostgreSQL database.
+
+You have access to the following tools:
 
 {tools}
 
-You can also use the chat history to retain information:
+Use these tools ONLY when the user’s question requires retrieving data from the database.
 
-{chat_history}
+When using the tools, ALWAYS follow this strict sequence:
 
-If the question doesn't requieres the use of a tool
-then simply try answering based on your knowledge
+1. **fetch_schema_tables** — Use this first to inspect the database schema. This helps you understand what tables exist and how they relate to each other. This tool DOESN'T require any input to work, simply call it like 'fetch_schema_tables'
 
-Before entering the format loop there are somethings to take in mind:
-- If the question asked requieres the help from the database
-  you'll first fetch the tables and AFTER THAT you'll start the
-  loop. Whenever you are using the fetch_schema_tables tool, remember
-  this tool DOESN'T requires any Action Input, so drop the parenthesis.
+2. **search_on_postgres_documentation** — After understanding the schema, search the PostgreSQL documentation to learn functions, clauses, or syntax that are unfamiliar or needed.
 
-- Whenever the user is asking a question that requires data FROM a database
-  you are ment to use fetch_schema_tables and THEN, with that information,
-  generate a query that will be used for the execute_query tool.
+3. **execute_query** — Finally, write and run the SQL query based on your schema understanding and documentation research.
 
-- Whenever a query fails, there are two course of actions:
-    1. Confirm there was no typo. First check using the fetch_schema_tables that
-       every field was correctly specified and there wasn't any spelling mistakes.
+---
 
-    2. Query structure logic. If there are no typos, make a brief summary out of
-       the error messageand pass it to the search_on_postgres_documentation to get
-       a better reference on how to fix the query.
+ **Query Error Handling Instructions**:
 
-Use the following format:
+If `execute_query` fails:
+
+- If the error is related to incorrect usage of a SQL function or syntax (logic error), go back and use **search_on_postgres_documentation** to learn the correct usage.
+
+- If the error mentions a missing or incorrect table/column name (schema error), revisit the output of **fetch_schema_tables** to correct the mistake.
+
+---
+
+Repeat the appropriate tool actions until the query succeeds or until the 9-step cycle limit is reached.
+
+Use the following format to answer:
 
 Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action in case it requieres one, if not, skip
-Observation: the result of the action
+Thought: reason about what to do next
+Action: the tool you want to use (must be one of [{tool_names}])
+Action Input: the input to the tool (if needed)
+Observation: the result of the tool call
 
-You may only repeat the Thought/Action/Action Input/Observation
-cycle up to 8 times.
+You may repeat the **Thought/Action/Action Input/Observation** cycle up to 9 times. If you are still unsure, respond by asking the user to clarify or say the information is beyond your current capabilities.
 
-If after 8 attempts you are still unsure, tell the user to be
-more specific in what he ment by that question.
+When you're confident in your final answer, use:
 
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
@@ -70,19 +69,19 @@ Final Answer: the final answer to the original input question
 Begin!
 
 Question: {input}
-Thought:{agent_scratchpad}
+{agent_scratchpad}
 """)
 
 memory = ConversationBufferMemory(memory_key="chat_history",
                                   return_messages=True)
 
-tools = [fetch_schema_tables, execute_query, search_on_postgres_documentation]
+tools = [fetch_schema_tables, execute_query, search_on_postgres_documentation, create_djikstra]
 
 agent = create_react_agent(chat,
                            tools,
                            prompt=prompt)
 
-executor = AgentExecutor(agent=agent, tools=tools, memory=memory,
+executor = AgentExecutor(agent=agent, tools=tools,  # memory=memory,
                          verbose=True, handle_parsing_errors=True,
                          max_iterations=8)
 
